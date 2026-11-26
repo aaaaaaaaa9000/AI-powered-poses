@@ -1,20 +1,37 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# استوديو الوضعيات
 
-# Run and deploy your AI Studio app
+تطبيق بيستخدم جيميناي عشان ياخد صورة موديل أو منتج ويطلّعها في وضعيات وستايلات تصوير احترافية (ستايلات جاهزة، إضاءة، زاوية كاميرا، وصورة مرجعية اختيارية للستايل).
 
-This contains everything you need to run your app locally.
+مفتاح جيميناي بيفضل على السيرفر بس، ومش بيوصل للمتصفح.
 
-View your app in AI Studio: https://ai.studio/apps/22df44e8-a365-4038-b792-33dd99aa6b8a
+## التشغيل على الجهاز
 
-## Run Locally
+```bash
+npm install
+cp .env.example .env   # وحط المفتاح
+npm run dev            # http://localhost:3000
+```
 
-**Prerequisites:**  Node.js
+## متغيرات البيئة
 
+| المتغير | لازم؟ | الافتراضي | الوصف |
+|---|---|---|---|
+| `GEMINI_API_KEY` | أيوه | | مفتاح جيميناي |
+| `GEMINI_IMAGE_MODEL` | لأ | `gemini-3.1-flash-lite-image` | موديل توليد الصور |
+| `GEMINI_MODEL` | لأ | `gemini-3.8-flash` | موديل تحليل صورة الستايل |
+| `APP_USERNAME` | لأ | `user` | اسم المستخدم للدخول |
+| `APP_PASSWORD` | لأ | فاضي | لو اتحط، التطبيق يطلب باسورد |
+| `RATE_LIMIT_PER_MINUTE` | لأ | `10` | أقصى عدد طلبات في الدقيقة لكل جهاز |
+| `MAX_IMAGE_MB` | لأ | `8` | أقصى حجم للصورة المرفوعة |
+| `MAX_PROMPT_CHARS` | لأ | `4000` | أقصى طول للوصف |
+| `APP_DOMAIN` | لأ | `poses.aaaaaaaaa9000.cloud` | الدومين في إعدادات ترافيك |
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## الرفع على السيرفر (بورتينر)
+
+1. في بورتينر: Stacks ← Add stack ← Repository.
+2. الاسم: `ai-app-poses`، الريبو ده، الفرع `refs/heads/main`، الملف `docker-compose.yml`.
+3. حط متغيرات البيئة فوق (على الأقل `GEMINI_API_KEY` و`APP_PASSWORD`).
+4. فعّل التحديث التلقائي كل 24 ساعة.
+
+التطبيق بيشتغل على بورت 3000 جوه الكونتينر، وترافيك بيوصله بالدومين مع شهادة أمان تلقائية.
+فحص الصحة: `GET /api/health`.

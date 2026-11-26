@@ -14,11 +14,3 @@ export interface ImageFile {
   mimeType: string;
   name: string;
 }
-
-export type VideoAspectRatio = '16:9' | '9:16';
-export type VideoResolution = '720p' | '1080p';
-
-export interface VideoConfig {
-  aspectRatio: VideoAspectRatio;
-  resolution: VideoResolution;
-}
