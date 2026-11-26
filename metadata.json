@@ -2,5 +2,7 @@
   "name": "AI-powered poses ",
   "description": "An AI-powered photo editing application that uses Gemini to transform your product images. Upload a photo, select customization options like lighting and perspective, and generate professional-quality product photos in seconds.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
