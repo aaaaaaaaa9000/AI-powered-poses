@@ -1,25 +1,20 @@
-import express from 'express';
+import express, { type NextFunction, type Request, type Response } from 'express';
 import path from 'path';
-import { fileURLToPath } from 'url';
-import { createServer as createViteServer } from 'vite';
-import { GoogleGenAI, Modality } from '@google/genai';
+import crypto from 'crypto';
+import { GoogleGenAI } from '@google/genai';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
-if (!apiKey) {
-  console.warn('Warning: GEMINI_API_KEY environment variable is not set. API calls will fail until configured.');
-}
-
-const ai = new GoogleGenAI({
-  apiKey: apiKey || '',
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    },
-  },
-});
+// ---- Config (all from env) ----
+const PORT = Number(process.env.PORT) || 3000;
+const IS_PROD = process.env.NODE_ENV === 'production';
+const IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-lite-image';
+const TEXT_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+const APP_USERNAME = process.env.APP_USERNAME || 'user';
+const APP_PASSWORD = process.env.APP_PASSWORD || '';
+const RATE_LIMIT_PER_MINUTE = Number(process.env.RATE_LIMIT_PER_MINUTE) || 10;
+const MAX_PROMPT_CHARS = Number(process.env.MAX_PROMPT_CHARS) || 4000;
+const MAX_IMAGE_MB = Number(process.env.MAX_IMAGE_MB) || 8;
+const MAX_IMAGE_BASE64 = Math.ceil((MAX_IMAGE_MB * 1024 * 1024 * 4) / 3);
+const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);
 
 const SAFETY_SETTINGS = [
   { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
@@ -28,50 +23,135 @@ const SAFETY_SETTINGS = [
   { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
 ];
 
+// ---- Gemini client (created once, lazily) ----
+let aiClient: GoogleGenAI | null = null;
+function getAI(): GoogleGenAI {
+  if (!process.env.GEMINI_API_KEY) {
+    throw Object.assign(new Error('GEMINI_API_KEY is not set'), { status: 'NO_KEY' });
+  }
+  if (!aiClient) aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  return aiClient;
+}
+
+// ---- Helpers ----
+type ImageInput = { base64: string; mimeType: string };
+
+/** Returns an Arabic error message if the image is invalid, otherwise null. */
+function validateImage(img: unknown, label: string): string | null {
+  const i = img as Partial<ImageInput> | undefined;
+  if (!i || typeof i.base64 !== 'string' || !i.base64) return `ارفع ${label} الأول.`;
+  if (typeof i.mimeType !== 'string' || !ALLOWED_MIME.has(i.mimeType)) {
+    return `نوع ${label} غير مدعوم. استخدم صورة عادية (جي بي جي أو بي إن جي).`;
+  }
+  if (i.base64.length > MAX_IMAGE_BASE64) return `${label} كبيرة جدًا. الحد الأقصى ${MAX_IMAGE_MB} ميجا.`;
+  return null;
+}
+
+/** Maps a Gemini SDK error to an HTTP status and an Arabic message; logs details server-side. */
+function sendGeminiError(res: Response, error: any, context: string) {
+  console.error(`[${context}]`, error?.status, error?.message);
+  const msg = String(error?.message || '');
+  if (error?.status === 'NO_KEY') {
+    return res.status(500).json({ error: 'مفتاح جيميناي مش متضبط على السيرفر.' });
+  }
+  if (error?.status === 429 || /429|RESOURCE_EXHAUSTED|quota/i.test(msg)) {
+    return res.status(429).json({ error: 'تم تجاوز حد الاستخدام للمفتاح. جرّب تاني بعد شوية.' });
+  }
+  if (error?.status === 403 || /PERMISSION_DENIED|API_KEY_INVALID|API key/i.test(msg)) {
+    return res.status(502).json({ error: 'مفتاح جيميناي مرفوض. راجع المفتاح في إعدادات السيرفر.' });
+  }
+  return res.status(500).json({ error: 'حصلت مشكلة أثناء المعالجة. جرّب تاني.' });
+}
+
+// ---- Rate limit (per IP, fixed 1-minute window, in memory) ----
+const hits = new Map<string, { count: number; reset: number }>();
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, h] of hits) if (h.reset <= now) hits.delete(ip);
+}, 60_000).unref();
+
+function rateLimit(req: Request, res: Response, next: NextFunction) {
+  const ip = req.ip || 'unknown';
+  const now = Date.now();
+  let h = hits.get(ip);
+  if (!h || h.reset <= now) {
+    h = { count: 0, reset: now + 60_000 };
+    hits.set(ip, h);
+  }
+  h.count++;
+  if (h.count > RATE_LIMIT_PER_MINUTE) {
+    res.setHeader('Retry-After', String(Math.ceil((h.reset - now) / 1000)));
+    return res.status(429).json({ error: 'طلبات كتير في وقت قصير. استنى دقيقة وجرّب تاني.' });
+  }
+  next();
+}
+
+// ---- Basic Auth (only when APP_PASSWORD is set) ----
+function safeEqual(a: string, b: string) {
+  const ha = crypto.createHash('sha256').update(a).digest();
+  const hb = crypto.createHash('sha256').update(b).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+
+function basicAuth(req: Request, res: Response, next: NextFunction) {
+  if (!APP_PASSWORD) return next();
+  const header = req.headers.authorization || '';
+  if (header.startsWith('Basic ')) {
+    const decoded = Buffer.from(header.slice(6), 'base64').toString('utf8');
+    const sep = decoded.indexOf(':');
+    const user = decoded.slice(0, sep);
+    const pass = decoded.slice(sep + 1);
+    if (sep >= 0 && safeEqual(user, APP_USERNAME) && safeEqual(pass, APP_PASSWORD)) return next();
+  }
+  res.setHeader('WWW-Authenticate', 'Basic realm="AI Poses", charset="UTF-8"');
+  return res.status(401).send('Authentication required');
+}
+
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+  app.set('trust proxy', 1);
+  app.disable('x-powered-by');
 
-  // Support large base64 image payloads
-  app.use(express.json({ limit: '50mb' }));
+  // Health check (before auth so Docker/Traefik can reach it)
+  app.get('/api/health', (_req, res) => {
+    res.json({ status: 'ok' });
+  });
 
-  // API Route: Generate Image
-  app.post('/api/generate-image', async (req, res) => {
+  app.use(basicAuth);
+
+  // Two images at MAX_IMAGE_MB each plus the prompt, with some headroom.
+  app.use(express.json({ limit: `${MAX_IMAGE_MB * 3 + 1}mb` }));
+
+  app.post('/api/generate-image', rateLimit, async (req, res) => {
+    const { productImage, prompt, styleImage } = req.body || {};
+
+    const productError = validateImage(productImage, 'صورة الموديل');
+    if (productError) return res.status(400).json({ error: productError });
+    if (typeof prompt !== 'string' || !prompt.trim()) {
+      return res.status(400).json({ error: 'الوصف فاضي.' });
+    }
+    if (prompt.length > MAX_PROMPT_CHARS) {
+      return res.status(413).json({ error: `الوصف طويل جدًا. الحد الأقصى ${MAX_PROMPT_CHARS} حرف.` });
+    }
+    const hasStyle = styleImage && styleImage.base64;
+    if (hasStyle) {
+      const styleError = validateImage(styleImage, 'صورة الستايل');
+      if (styleError) return res.status(400).json({ error: styleError });
+    }
+
     try {
-      const { productImage, prompt, styleImage } = req.body;
-
-      if (!productImage || !productImage.base64) {
-        return res.status(400).json({ error: 'Upload a subject image first.' });
-      }
-      if (!prompt) {
-        return res.status(400).json({ error: 'Prompt is required.' });
-      }
-
       const parts: any[] = [
-        {
-          inlineData: {
-            data: productImage.base64,
-            mimeType: productImage.mimeType || 'image/jpeg',
-          },
-        },
+        { inlineData: { data: productImage.base64, mimeType: productImage.mimeType } },
         { text: prompt },
       ];
-
-      if (styleImage && styleImage.base64) {
-        parts.push({
-          inlineData: {
-            data: styleImage.base64,
-            mimeType: styleImage.mimeType || 'image/jpeg',
-          },
-        });
+      if (hasStyle) {
+        parts.push({ inlineData: { data: styleImage.base64, mimeType: styleImage.mimeType } });
       }
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.1-flash-lite-image',
+      const response = await getAI().models.generateContent({
+        model: IMAGE_MODEL,
         contents: { parts },
-        config: {
-          safetySettings: SAFETY_SETTINGS as any,
-        },
+        config: { safetySettings: SAFETY_SETTINGS as any },
       });
 
       for (const part of response.candidates?.[0]?.content?.parts || []) {
@@ -84,132 +164,74 @@ async function startServer() {
         }
       }
 
-      const safetyReason = response.candidates?.[0]?.finishReason;
-      if (safetyReason && safetyReason !== 'STOP') {
-        return res.status(400).json({
-          error: `Image generation failed due to safety settings: ${safetyReason}`,
-        });
+      const reason = response.candidates?.[0]?.finishReason;
+      console.warn('[generate-image] no image returned, finishReason:', reason);
+      if (reason && reason !== 'STOP') {
+        return res.status(422).json({ error: 'الموديل رفض يولّد الصورة دي. جرّب صورة أو ستايل تاني.' });
       }
-
-      return res.status(500).json({ error: 'No image was generated by the model.' });
-    } catch (error: any) {
-      console.error('Error generating image:', error);
-      const errMsg = typeof error?.message === 'string' ? error.message : JSON.stringify(error || '');
-
-      if (
-        error?.status === 429 ||
-        errMsg.includes('429') ||
-        errMsg.includes('RESOURCE_EXHAUSTED') ||
-        errMsg.includes('quota') ||
-        errMsg.includes('limit: 0')
-      ) {
-        return res.status(429).json({
-          error: 'Image generation quota exceeded. Google Gemini image models require a billing-enabled API key (Free Tier has a limit of 0 for image generation). You can attach a billing-enabled key in Settings > Secrets.',
-          isQuotaExceeded: true,
-        });
-      }
-
-      if (
-        error?.status === 403 ||
-        errMsg.includes('PERMISSION_DENIED') ||
-        errMsg.includes('API_KEY_INVALID') ||
-        error?.status === 400 && errMsg.includes('API key')
-      ) {
-        return res.status(403).json({
-          error: 'API key authorization failed. Please verify your API key in Settings > Secrets.',
-          isAuthError: true,
-        });
-      }
-
-      let cleanMessage = error instanceof Error ? error.message : 'An unexpected error occurred during image generation.';
-      try {
-        if (cleanMessage.includes('{')) {
-          const jsonStart = cleanMessage.indexOf('{');
-          const parsed = JSON.parse(cleanMessage.slice(jsonStart));
-          if (parsed.error?.message) {
-            cleanMessage = parsed.error.message;
-          }
-        }
-      } catch (_) {}
-
-      return res.status(500).json({ error: cleanMessage });
+      return res.status(502).json({ error: 'الموديل ماطلّعش صورة. جرّب تاني.' });
+    } catch (error) {
+      return sendGeminiError(res, error, 'generate-image');
     }
   });
 
-  // API Route: Analyze Style Image
-  app.post('/api/analyze-style', async (req, res) => {
+  app.post('/api/analyze-style', rateLimit, async (req, res) => {
+    const { styleImage } = req.body || {};
+    const styleError = validateImage(styleImage, 'صورة الستايل');
+    if (styleError) return res.status(400).json({ error: styleError });
+
     try {
-      const { styleImage } = req.body;
-
-      if (!styleImage || !styleImage.base64) {
-        return res.status(400).json({ error: 'Style image is required.' });
-      }
-
-      const imagePart = {
-        inlineData: {
-          data: styleImage.base64,
-          mimeType: styleImage.mimeType || 'image/jpeg',
+      const response = await getAI().models.generateContent({
+        model: TEXT_MODEL,
+        contents: {
+          parts: [
+            { inlineData: { data: styleImage.base64, mimeType: styleImage.mimeType } },
+            {
+              text: "Analyze this image and describe its aesthetic, color palette, and mood in a concise phrase suitable for a prompt. For example: 'A vibrant, high-contrast style with bold neon colors and a futuristic mood.'",
+            },
+          ],
         },
-      };
-
-      const textPart = {
-        text: "Analyze this image and describe its aesthetic, color palette, and mood in a concise phrase suitable for a prompt. For example: 'A vibrant, high-contrast style with bold neon colors and a futuristic mood.'",
-      };
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: { parts: [imagePart, textPart] },
-        config: {
-          safetySettings: SAFETY_SETTINGS as any,
-        },
+        config: { safetySettings: SAFETY_SETTINGS as any },
       });
 
       if (!response.text) {
-        const safetyReason = response.candidates?.[0]?.finishReason;
-        if (safetyReason && safetyReason !== 'STOP') {
-          return res.status(400).json({
-            error: `Style analysis failed due to safety settings: ${safetyReason}`,
-          });
-        }
-        return res.status(500).json({ error: 'Model returned no text for style analysis.' });
+        console.warn('[analyze-style] no text, finishReason:', response.candidates?.[0]?.finishReason);
+        return res.status(502).json({ error: 'ماقدرتش أحلل صورة الستايل. جرّب صورة تانية.' });
       }
-
       return res.json({ description: response.text.trim() });
-    } catch (error: any) {
-      console.error('Error analyzing style:', error);
-      const errMsg = error?.message || '';
-      if (error?.status === 429 || errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED')) {
-        return res.status(429).json({
-          error: 'Quota exceeded. Please check your API key in the Settings > Secrets panel.',
-        });
-      }
-      const message = error instanceof Error ? error.message : 'An unexpected error occurred during style analysis.';
-      return res.status(500).json({ error: message });
+    } catch (error) {
+      return sendGeminiError(res, error, 'analyze-style');
     }
   });
 
-  // Health check endpoint
-  app.get('/api/health', (_req, res) => {
-    res.json({ status: 'ok', serverSideGemini: true });
+  // Unknown API routes → JSON 404 (instead of the SPA page)
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ error: 'Not found' });
   });
 
-  // Vite middleware in dev or static files in production
-  if (process.env.NODE_ENV === 'production') {
-    const distPath = path.resolve(__dirname, 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.resolve(distPath, 'index.html'));
+  if (IS_PROD) {
+    const distPath = path.resolve(process.cwd(), 'dist');
+    app.use(
+      '/assets',
+      express.static(path.join(distPath, 'assets'), { maxAge: '1y', immutable: true }),
+    );
+    app.use(express.static(distPath, { index: false }));
+    app.get('/{*splat}', (_req, res) => {
+      res.setHeader('Cache-Control', 'no-cache');
+      res.sendFile(path.join(distPath, 'index.html'));
     });
   } else {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
+    const { createServer } = await import('vite');
+    const vite = await createServer({ server: { middlewareMode: true }, appType: 'spa' });
     app.use(vite.middlewares);
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://0.0.0.0:${PORT}`);
+    console.log(
+      `Server on :${PORT} | image model: ${IMAGE_MODEL} | text model: ${TEXT_MODEL} | ` +
+        `auth: ${APP_PASSWORD ? 'on' : 'off'} | rate limit: ${RATE_LIMIT_PER_MINUTE}/min | ` +
+        `key: ${process.env.GEMINI_API_KEY ? 'set' : 'MISSING'}`,
+    );
   });
 }
 

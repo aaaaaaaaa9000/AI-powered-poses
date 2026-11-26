@@ -1,7 +1,8 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { CustomizationOptions, ImageFile } from './types';
-import { generateImage, analyzeStyleImage, upscaleImage } from './services/geminiService';
+import { generateImage, analyzeStyleImage } from './services/geminiService';
+import { readAndResizeImage } from './services/resizeImage';
 import CustomizationPanel from './components/CustomizationPanel';
 import ImageWorkspace from './components/ImageWorkspace';
 import PromptEditor from './components/PromptEditor';
@@ -26,7 +27,6 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [retrySeconds, setRetrySeconds] = useState<number>(0);
   
-  const [isUpscaling, setIsUpscaling] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'presets' | 'refine'>('presets');
 
   useEffect(() => {
@@ -46,7 +46,7 @@ function App() {
           setStyleDescription(description);
         } catch (err) {
           console.error(err);
-          setError(err instanceof Error ? err.message : "Could not analyze the style image.");
+          setError(err instanceof Error ? err.message : "ماقدرتش أحلل صورة الستايل.");
           setStyleDescription(null);
         } finally {
           setIsAnalyzingStyle(false);
@@ -128,7 +128,7 @@ function App() {
   
   const handleGenerate = useCallback(async () => {
     if (!productImage || !prompt) {
-      setError('Upload a subject image first.');
+      setError('ارفع صورة الموديل الأول.');
       return;
     }
     setIsLoading(true);
@@ -139,25 +139,12 @@ function App() {
       const result = await generateImage(productImage, prompt, styleImage);
       setGeneratedImage(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Generation failed.');
+      setError(err instanceof Error ? err.message : 'فشل التوليد. جرّب تاني.');
     } finally {
       setIsLoading(false);
     }
   }, [productImage, prompt, styleImage]);
   
-  const handleUpscale = useCallback(async () => {
-    if (!generatedImage) return;
-    setIsUpscaling(true);
-    try {
-      const upscaled = await upscaleImage(generatedImage);
-      setGeneratedImage(upscaled);
-    } catch (err) {
-      setError("Upscale failed.");
-    } finally {
-      setIsUpscaling(false);
-    }
-  }, [generatedImage]);
-
   const handleDownload = useCallback(() => {
     if (!generatedImage) return;
     const link = document.createElement('a');
@@ -166,24 +153,28 @@ function App() {
     link.click();
   }, [generatedImage]);
 
-  const handleFileChange = (setter: React.Dispatch<React.SetStateAction<ImageFile | null>>) => (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setGeneratedImage(null);
-        setter({
-          base64: (reader.result as string).split(',')[1],
-          mimeType: file.type,
-          name: file.name
-        });
-      };
-      reader.readAsDataURL(file);
+  const handleFileChange = (setter: React.Dispatch<React.SetStateAction<ImageFile | null>>) => async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const input = event.target;
+    const file = input.files?.[0];
+    // Reset so picking the same file again still triggers onChange
+    input.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setError('الملف ده مش صورة.');
+      return;
+    }
+    try {
+      const image = await readAndResizeImage(file);
+      setGeneratedImage(null);
+      setError(null);
+      setter(image);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'ماقدرتش أقرا الصورة.');
     }
   };
 
   return (
-    <div className="min-h-screen bg-stone-950 text-stone-200 flex flex-col font-sans selection:bg-cyan-500/30">
+    <div className="min-h-screen bg-stone-950 text-stone-200 flex flex-col selection:bg-cyan-500/30">
       {/* Header */}
       <header className="h-14 bg-stone-950/80 backdrop-blur-md border-b border-white/5 flex items-center justify-between px-4 lg:px-8 sticky top-0 z-50">
         <div className="flex items-center gap-3">
@@ -191,7 +182,7 @@ function App() {
              <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
            </div>
            <h1 className="text-lg font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-stone-400">
-             STUDIO<span className="font-light">AI</span>
+             استوديو <span className="font-light">الوضعيات</span>
            </h1>
         </div>
 
@@ -204,11 +195,11 @@ function App() {
               {isLoading ? (
                 <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin"/>
               ) : retrySeconds > 0 ? (
-                `Retry in ${retrySeconds}s`
+                `استنى ${retrySeconds} ث`
               ) : (
                 <>
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                  <span>RENDER</span>
+                  <span>ولّد الصورة</span>
                 </>
               )}
            </button>
@@ -225,16 +216,13 @@ function App() {
                 <div className="relative group max-w-full max-h-full">
                   <img 
                     src={`data:${generatedImage.mimeType};base64,${generatedImage.base64}`} 
-                    alt="Generated" 
+                    alt="الصورة الناتجة" 
                     className="max-w-full max-h-[70vh] object-contain rounded-2xl shadow-2xl shadow-black ring-1 ring-white/10"
                   />
                   {/* Result Controls */}
-                  <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                    <button onClick={handleUpscale} disabled={isUpscaling} className="glass-panel px-4 py-2 rounded-full text-xs font-bold hover:bg-white/10 transition-colors flex items-center gap-2">
-                       {isUpscaling ? <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"/> : '2X Upscale'}
-                    </button>
+                  <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-2 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity duration-300">
                     <button onClick={handleDownload} className="bg-white text-black px-4 py-2 rounded-full text-xs font-bold hover:bg-stone-200 transition-colors flex items-center gap-2">
-                       Download
+                       تحميل الصورة
                     </button>
                   </div>
                 </div>
@@ -244,9 +232,17 @@ function App() {
                     <svg className="w-10 h-10 text-stone-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
                   </div>
                   <div>
-                    <h2 className="text-xl font-semibold mb-2">Ready to Render</h2>
-                    <p className="text-sm text-stone-500 leading-relaxed">Upload a subject and select a style profile below to get started.</p>
+                    <h2 className="text-xl font-semibold mb-2">جاهز للتوليد</h2>
+                    <p className="text-sm text-stone-500 leading-relaxed">ارفع صورة الموديل واختار الستايل اللي يعجبك عشان تبدأ.</p>
                   </div>
+                  {productImage ? (
+                    <p className="text-xs text-stone-400">الصورة اترفعت. اختار الستايل ودوس "ولّد الصورة".</p>
+                  ) : (
+                    <label htmlFor="main-subject-uploader" className="cursor-pointer bg-white text-black px-5 py-2.5 rounded-full text-sm font-bold hover:bg-stone-200 transition-colors">
+                      ارفع صورة الموديل
+                      <input id="main-subject-uploader" type="file" accept="image/*" className="hidden" onChange={handleFileChange(setProductImage)} />
+                    </label>
+                  )}
                 </div>
               )}
            </div>
@@ -260,10 +256,10 @@ function App() {
                      </svg>
                    </div>
                    <div className="flex-1 min-w-0">
-                     <h4 className="text-xs font-bold text-white uppercase tracking-wider mb-1">
-                       {error.toLowerCase().includes('quota') || error.toLowerCase().includes('billing') ? 'Quota & Billing Notice' : 'Notice'}
+                     <h4 className="text-xs font-bold text-white mb-1">
+                       {error.includes('حد الاستخدام') ? 'تنبيه بخصوص حد الاستخدام' : 'تنبيه'}
                      </h4>
-                     <p className="text-xs text-stone-300 leading-relaxed">{error}</p>
+                     <p dir="auto" className="text-xs text-stone-300 leading-relaxed">{error}</p>
                    </div>
                    <button onClick={() => setError(null)} className="text-stone-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors">✕</button>
                 </div>
@@ -272,21 +268,21 @@ function App() {
         </section>
 
         {/* Controls Panel - Bottom on mobile, Right on Desktop */}
-        <aside className="w-full lg:w-[420px] bg-stone-900 border-t lg:border-t-0 lg:border-l border-white/5 flex flex-col shrink-0 lg:h-full z-40 lg:sticky lg:top-14">
+        <aside className="w-full lg:w-[420px] bg-stone-900 border-t lg:border-t-0 lg:border-s border-white/5 flex flex-col shrink-0 lg:h-full z-40 lg:sticky lg:top-14">
           
           {/* Tabs for Presets vs Advanced/Prompt */}
           <div className="flex border-b border-white/5 h-12 shrink-0">
             <button 
               onClick={() => setActiveTab('presets')} 
-              className={`flex-1 text-[10px] uppercase tracking-widest font-bold transition-all ${activeTab === 'presets' ? 'text-white border-b-2 border-white' : 'text-stone-500'}`}
+              className={`flex-1 text-xs font-bold transition-all ${activeTab === 'presets' ? 'text-white border-b-2 border-white' : 'text-stone-500'}`}
             >
-              Style Presets
+              الستايلات
             </button>
             <button 
               onClick={() => setActiveTab('refine')} 
-              className={`flex-1 text-[10px] uppercase tracking-widest font-bold transition-all ${activeTab === 'refine' ? 'text-white border-b-2 border-white' : 'text-stone-500'}`}
+              className={`flex-1 text-xs font-bold transition-all ${activeTab === 'refine' ? 'text-white border-b-2 border-white' : 'text-stone-500'}`}
             >
-              Refine & Source
+              الصورة والتفاصيل
             </button>
           </div>
 
@@ -294,15 +290,15 @@ function App() {
             {activeTab === 'presets' ? (
               <div className="space-y-4">
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-xs font-bold text-stone-500 uppercase tracking-widest">Select Portrait Style</h3>
-                  <span className="text-[10px] text-stone-600">{STYLE_PRESETS.length} Profiles</span>
+                  <h3 className="text-xs font-bold text-stone-500">اختار ستايل الصورة</h3>
+                  <span className="text-[10px] text-stone-600">{STYLE_PRESETS.length} ستايل</span>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   {STYLE_PRESETS.map((preset) => (
                     <button
                       key={preset.value}
                       onClick={() => setOptions(prev => ({ ...prev, stylePreset: preset.value }))}
-                      className={`preset-card p-4 rounded-xl text-left border transition-all relative overflow-hidden group ${
+                      className={`preset-card p-4 rounded-xl text-start border transition-all relative overflow-hidden group ${
                         options.stylePreset === preset.value 
                         ? 'bg-white border-white text-black shadow-lg shadow-white/5' 
                         : 'bg-stone-800/50 border-white/5 text-stone-400 hover:border-white/20 hover:bg-stone-800'
@@ -310,7 +306,7 @@ function App() {
                     >
                       <span className="text-xs font-semibold leading-tight block relative z-10">{preset.label}</span>
                       {options.stylePreset === preset.value && (
-                        <div className="absolute top-1 right-1">
+                        <div className="absolute top-1 end-1">
                           <svg className="w-3 h-3 text-black" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
                         </div>
                       )}
@@ -321,7 +317,7 @@ function App() {
             ) : (
               <div className="space-y-8">
                 <section>
-                   <h3 className="text-xs font-bold text-stone-500 uppercase tracking-widest mb-4">Subject Source</h3>
+                   <h3 className="text-xs font-bold text-stone-500 mb-4">صورة الموديل</h3>
                    <ImageWorkspace 
                       productImage={productImage} 
                       onProductImageUpload={handleFileChange(setProductImage)}
@@ -331,7 +327,7 @@ function App() {
                 <div className="h-px bg-white/5 w-full"></div>
 
                 <section>
-                   <h3 className="text-xs font-bold text-stone-500 uppercase tracking-widest mb-4">Refinement Options</h3>
+                   <h3 className="text-xs font-bold text-stone-500 mb-4">تفاصيل إضافية</h3>
                    <CustomizationPanel 
                       options={options}
                       setOptions={setOptions}
@@ -344,7 +340,7 @@ function App() {
                 <div className="h-px bg-white/5 w-full"></div>
 
                 <section>
-                   <h3 className="text-xs font-bold text-stone-500 uppercase tracking-widest mb-4">Prompt Strategy</h3>
+                   <h3 className="text-xs font-bold text-stone-500 mb-4">وصف الصورة (للموديل)</h3>
                    <PromptEditor 
                         prompt={prompt}
                         setPrompt={setPrompt}
@@ -361,7 +357,7 @@ function App() {
                 disabled={isLoading || !productImage}
                 className="w-full bg-cyan-600 hover:bg-cyan-500 text-white h-12 rounded-xl font-bold transition-all shadow-xl shadow-cyan-900/20 flex items-center justify-center gap-3 disabled:opacity-20"
              >
-                {isLoading ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"/> : 'GENERATE NOW'}
+                {isLoading ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"/> : productImage ? 'ولّد الصورة' : 'ارفع صورة الموديل الأول'}
              </button>
           </div>
         </aside>

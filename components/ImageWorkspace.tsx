@@ -16,7 +16,7 @@ const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
     <div className="w-full">
         <ImageUploader 
             id="product-uploader"
-            title="Upload Subject"
+            title="ارفع صورة الموديل"
             image={productImage}
             onImageUpload={onProductImageUpload}
         />
