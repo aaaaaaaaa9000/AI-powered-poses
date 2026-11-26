@@ -1,6 +1,6 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
 import path from 'path';
-import crypto from 'crypto';
+import { installLogin } from './login';
 import { GoogleGenAI } from '@google/genai';
 
 // ---- Config (all from env) ----
@@ -86,27 +86,6 @@ function rateLimit(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-// ---- Basic Auth (only when APP_PASSWORD is set) ----
-function safeEqual(a: string, b: string) {
-  const ha = crypto.createHash('sha256').update(a).digest();
-  const hb = crypto.createHash('sha256').update(b).digest();
-  return crypto.timingSafeEqual(ha, hb);
-}
-
-function basicAuth(req: Request, res: Response, next: NextFunction) {
-  if (!APP_PASSWORD) return next();
-  const header = req.headers.authorization || '';
-  if (header.startsWith('Basic ')) {
-    const decoded = Buffer.from(header.slice(6), 'base64').toString('utf8');
-    const sep = decoded.indexOf(':');
-    const user = decoded.slice(0, sep);
-    const pass = decoded.slice(sep + 1);
-    if (sep >= 0 && safeEqual(user, APP_USERNAME) && safeEqual(pass, APP_PASSWORD)) return next();
-  }
-  res.setHeader('WWW-Authenticate', 'Basic realm="AI Poses", charset="UTF-8"');
-  return res.status(401).send('Authentication required');
-}
-
 async function startServer() {
   const app = express();
   app.set('trust proxy', 1);
@@ -117,7 +96,8 @@ async function startServer() {
     res.json({ status: 'ok' });
   });
 
-  app.use(basicAuth);
+  // In-page login form + session cookie (only when APP_PASSWORD is set)
+  installLogin(app, { appName: 'استوديو الوضعيات', username: APP_USERNAME, password: APP_PASSWORD, accent: '#9C3548' });
 
   // Two images at MAX_IMAGE_MB each plus the prompt, with some headroom.
   app.use(express.json({ limit: `${MAX_IMAGE_MB * 3 + 1}mb` }));
