@@ -19,7 +19,7 @@ export async function generateImage(
 
   const data = await response.json().catch(() => ({}));
 
-  if (response.status === 401) throw new Error('انتهت الجلسة. حدّث الصفحة وادخل الباسورد تاني.');
+  if (response.status === 401) throw new Error('انتهت الجلسة. حدّث الصفحة وسجّل الدخول من جديد.');
   if (!response.ok) {
     throw new Error(data.error || `فشل التوليد (${response.status})`);
   }
@@ -48,6 +48,7 @@ export async function analyzeStyleImage(styleImage: ImageFile): Promise<string> 
 
   const data = await response.json().catch(() => ({}));
 
+  if (response.status === 401) throw new Error('انتهت الجلسة. حدّث الصفحة وسجّل الدخول من جديد.');
   if (!response.ok) {
     throw new Error(data.error || `فشل تحليل الستايل (${response.status})`);
   }
