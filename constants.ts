@@ -1,31 +1,41 @@
 
 import { LightingStyle, CameraPerspective, StylePreset } from './types';
 
-export const STYLE_PRESETS: { value: StylePreset; label: string }[] = [
-  { value: 'Standard', label: 'تصوير احترافي قياسي' },
-  { value: 'Cinematic 3D Ad', label: 'إعلان سينمائي ثلاثي الأبعاد' },
-  { value: 'Valentine 3D Ad', label: 'إعلان عيد الحب' },
-  { value: 'Relaxation 3D Ad', label: 'راحة واسترخاء' },
-  { value: 'Winter 3D Ad', label: 'أجواء شتوية دافئة' },
-  { value: 'Summer 3D Ad', label: 'أجواء صيفية حيوية' },
-  { value: 'Summer Relaxed Ad', label: 'أجواء صيفية هادئة (داخلي)' },
-  { value: 'Summer Relaxed Outdoor Ad', label: 'أجواء صيفية هادئة (خارجي)' },
-  { value: 'Outdoor Portrait', label: 'بورتريه خارجي واقعي' },
-  { value: 'Editorial Portrait', label: 'بورتريه خارجي عصري' },
-  { value: 'Instagram Reels Style', label: 'أجواء انستقرام عصرية' },
-  { value: 'Instagram Reels Lifestyle', label: 'أجواء انستقرام لايف ستايل' },
-  { value: 'Instagram Reels Confidence', label: 'ثقة ورفاهية' },
-  { value: 'Outdoor Photoshoot Style', label: 'جلسة تصوير خارجية احترافية' },
-  { value: 'Natural Outdoor Lifestyle', label: 'بورتريه خارجي طبيعي' },
-  { value: 'Natural Close-up Portrait', label: 'بورتريه قريب وطبيعي' },
-  { value: 'Instagram Reels Luxury', label: 'رفاهية انستقرام' },
-  { value: 'Instagram Reels Soft Luxury', label: 'رفاهية أنثوية ناعمة' },
-  { value: 'Instagram Reels Soft Feminine', label: 'أجواء ريلز أنثوية هادئة' },
-  { value: 'Instagram Reels Birthday', label: 'احتفال عيد ميلاد' },
-  { value: 'Instagram Reels Birthday Celebration', label: 'احتفال عيد ميلاد مبهج' },
-  { value: 'Instagram Reels Birthday Walk', label: 'عيد ميلاد مع حركة ومشي' },
-  { value: 'Instagram Reels Café Birthday', label: 'عيد ميلاد في كافيه' },
-  { value: 'Instagram Reels Birthday Close-up', label: 'بورتريه قريب مع تورتة عيد الميلاد' },
+export type PresetGroup = 'studio' | 'ads' | 'portrait' | 'reels' | 'birthday';
+
+export const PRESET_GROUPS: { value: PresetGroup; label: string }[] = [
+  { value: 'studio', label: 'استوديو' },
+  { value: 'portrait', label: 'بورتريه' },
+  { value: 'reels', label: 'ريلز وانستقرام' },
+  { value: 'birthday', label: 'عيد ميلاد' },
+  { value: 'ads', label: 'إعلانات' },
+];
+
+export const STYLE_PRESETS: { value: StylePreset; group: PresetGroup; label: string }[] = [
+  { value: 'Standard', group: 'studio', label: 'تصوير احترافي قياسي' },
+  { value: 'Cinematic 3D Ad', group: 'ads', label: 'إعلان سينمائي ثلاثي الأبعاد' },
+  { value: 'Valentine 3D Ad', group: 'ads', label: 'إعلان عيد الحب' },
+  { value: 'Relaxation 3D Ad', group: 'ads', label: 'راحة واسترخاء' },
+  { value: 'Winter 3D Ad', group: 'ads', label: 'أجواء شتوية دافئة' },
+  { value: 'Summer 3D Ad', group: 'ads', label: 'أجواء صيفية حيوية' },
+  { value: 'Summer Relaxed Ad', group: 'ads', label: 'أجواء صيفية هادئة (داخلي)' },
+  { value: 'Summer Relaxed Outdoor Ad', group: 'ads', label: 'أجواء صيفية هادئة (خارجي)' },
+  { value: 'Outdoor Portrait', group: 'portrait', label: 'بورتريه خارجي واقعي' },
+  { value: 'Editorial Portrait', group: 'portrait', label: 'بورتريه خارجي عصري' },
+  { value: 'Instagram Reels Style', group: 'reels', label: 'أجواء انستقرام عصرية' },
+  { value: 'Instagram Reels Lifestyle', group: 'reels', label: 'أجواء انستقرام لايف ستايل' },
+  { value: 'Instagram Reels Confidence', group: 'reels', label: 'ثقة ورفاهية' },
+  { value: 'Outdoor Photoshoot Style', group: 'portrait', label: 'جلسة تصوير خارجية احترافية' },
+  { value: 'Natural Outdoor Lifestyle', group: 'portrait', label: 'بورتريه خارجي طبيعي' },
+  { value: 'Natural Close-up Portrait', group: 'portrait', label: 'بورتريه قريب وطبيعي' },
+  { value: 'Instagram Reels Luxury', group: 'reels', label: 'رفاهية انستقرام' },
+  { value: 'Instagram Reels Soft Luxury', group: 'reels', label: 'رفاهية أنثوية ناعمة' },
+  { value: 'Instagram Reels Soft Feminine', group: 'reels', label: 'أجواء ريلز أنثوية هادئة' },
+  { value: 'Instagram Reels Birthday', group: 'birthday', label: 'احتفال عيد ميلاد' },
+  { value: 'Instagram Reels Birthday Celebration', group: 'birthday', label: 'احتفال عيد ميلاد مبهج' },
+  { value: 'Instagram Reels Birthday Walk', group: 'birthday', label: 'عيد ميلاد مع حركة ومشي' },
+  { value: 'Instagram Reels Café Birthday', group: 'birthday', label: 'عيد ميلاد في كافيه' },
+  { value: 'Instagram Reels Birthday Close-up', group: 'birthday', label: 'بورتريه قريب مع تورتة عيد الميلاد' },
 ];
 
 export const LIGHTING_STYLES: { value: LightingStyle; label: string }[] = [
